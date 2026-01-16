@@ -1,0 +1,402 @@
+{% import "_includes/forms" as forms %}
+
+{% set currentMappings = settings.fieldMappings ?? {} %}
+
+<div id="google-shopping-feed-settings">
+
+    <h2>Feed Status</h2>
+    <p>Current status of the Google Shopping Feed cache for each site.</p>
+
+    <div class="feed-status-container">
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th>Site</th>
+                    <th>Status</th>
+                    <th>Items</th>
+                    <th>Last Generated</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for siteId, status in feedStatus %}
+                    {% set site = status.site %}
+                    {% set meta = status.meta %}
+                    {% set hasCachedFeed = status.hasCachedFeed %}
+                    <tr data-site-id="{{ siteId }}">
+                        <td>
+                            <strong>{{ site.name }}</strong>
+                        </td>
+                        <td>
+                            {% if meta.status == 'complete' and hasCachedFeed %}
+                                <span class="status green"></span> Cached
+                            {% elseif meta.status == 'generating' %}
+                                <span class="status orange"></span> Generating...
+                            {% elseif meta.status == 'error' %}
+                                <span class="status red"></span> Error
+                            {% else %}
+                                <span class="status"></span> Not generated
+                            {% endif %}
+                        </td>
+                        <td>{{ meta.itemCount ?? 0 }}</td>
+                        <td>
+                            {% if meta.completedAt %}
+                                {{ meta.completedAt|datetime('short') }}
+                            {% else %}
+                                Never
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="btngroup">
+                                <button type="button" class="btn small regenerate-feed-btn" data-site-id="{{ siteId }}">
+                                    Regenerate
+                                </button>
+                                <a href="{{ site.baseUrl }}google-shopping-feed.xml" class="btn small" target="_blank">
+                                    Preview
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% if meta.error %}
+                        <tr>
+                            <td colspan="5">
+                                <div class="error">{{ meta.error }}</div>
+                            </td>
+                        </tr>
+                    {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <hr>
+
+    <h2>Cache Settings</h2>
+
+    {{ forms.selectField({
+        label: 'Cache Duration',
+        instructions: 'How long to cache the generated feed. Set up a cron job to run `./craft google-shopping-feed/feed/generate --force` at this interval.',
+        id: 'cacheDuration',
+        name: 'cacheDuration',
+        value: settings.cacheDuration,
+        options: cacheDurationOptions,
+    }) }}
+
+    <div class="pane">
+        <h3>Cron Setup</h3>
+        <p>Add the following cron entry to regenerate feeds automatically (example for hourly):</p>
+        <pre><code>0 * * * * /usr/bin/php /path/to/your/project/craft google-shopping-feed/feed/generate --force</code></pre>
+        <p class="light">This will check all sites and queue regeneration jobs for feeds that are expired or missing.</p>
+    </div>
+
+    <hr>
+
+    <h2>Unit Settings</h2>
+
+    <div class="flex">
+        <div class="flex-grow">
+            {{ forms.selectField({
+                label: 'Weight Unit',
+                instructions: 'Unit for shipping weight values.',
+                id: 'weightUnit',
+                name: 'weightUnit',
+                value: settings.weightUnit,
+                options: {
+                    'kg': 'Kilograms (kg)',
+                    'g': 'Grams (g)',
+                    'lb': 'Pounds (lb)',
+                    'oz': 'Ounces (oz)',
+                },
+            }) }}
+        </div>
+        <div class="flex-grow">
+            {{ forms.selectField({
+                label: 'Dimension Unit',
+                instructions: 'Unit for shipping dimension values.',
+                id: 'dimensionUnit',
+                name: 'dimensionUnit',
+                value: settings.dimensionUnit,
+                options: {
+                    'cm': 'Centimeters (cm)',
+                    'in': 'Inches (in)',
+                },
+            }) }}
+        </div>
+    </div>
+
+    <hr>
+
+    <h2>Field Mappings</h2>
+    <p>Map your product and variant fields to Google Shopping Feed fields.</p>
+
+    <div class="field-mappings">
+        <table class="data fullwidth">
+            <thead>
+                <tr>
+                    <th>Google Shopping Field</th>
+                    <th>Source</th>
+                    <th>Field</th>
+                </tr>
+            </thead>
+            <tbody id="mappings-tbody">
+                {% for googleField, googleFieldName in googleFields %}
+                    {% set mapping = currentMappings[googleField] ?? {} %}
+                    <tr data-google-field="{{ googleField }}">
+                        <td>
+                            <strong>{{ googleFieldName }}</strong>
+                            {% if googleField in ['id', 'title', 'price', 'availability', 'sku'] %}
+                                <span class="info">* Auto-handled</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <select name="fieldMappings[{{ googleField }}][source]" class="source-select" {% if googleField in ['id', 'title', 'price', 'availability', 'sku'] %}disabled{% endif %}>
+                                <option value="">-- Select Source --</option>
+                                <option value="product" {% if (mapping.source ?? '') == 'product' %}selected{% endif %}>Product</option>
+                                <option value="variant" {% if (mapping.source ?? '') == 'variant' %}selected{% endif %}>Variant</option>
+                            </select>
+                        </td>
+                        <td>
+                            {% set mappingSource = mapping.source ?? '' %}
+                            {% set mappingFieldHandle = mapping.fieldHandle ?? '' %}
+                            {% set isAutoHandled = googleField in ['id', 'title', 'price', 'availability', 'sku'] %}
+                            {% set allowedTypes = fieldConstraints[googleField] ?? [] %}
+                            <select name="fieldMappings[{{ googleField }}][fieldHandle]" class="field-select" data-current-value="{{ mappingFieldHandle }}" {% if not mappingSource or isAutoHandled %}disabled{% endif %}>
+                                <option value="">-- Select Field --</option>
+                                {% if mappingSource == 'product' %}
+                                    {% for field in productFields %}
+                                        {% set fieldTypeCategory = field.typeCategory ?? 'text' %}
+                                        {% if allowedTypes|length == 0 or fieldTypeCategory in allowedTypes %}
+                                            <option value="{{ field.handle }}" {% if mappingFieldHandle == field.handle %}selected{% endif %}>
+                                                {{ field.name }} ({{ field.handle }})
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% elseif mappingSource == 'variant' %}
+                                    {% for field in variantFields %}
+                                        {% set fieldTypeCategory = field.typeCategory ?? 'text' %}
+                                        {% if allowedTypes|length == 0 or fieldTypeCategory in allowedTypes %}
+                                            <option value="{{ field.handle }}" {% if mappingFieldHandle == field.handle %}selected{% endif %}>
+                                                {{ field.name }} ({{ field.handle }})
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% endif %}
+                            </select>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% js %}
+(function() {
+    const productFields = {{ productFields|json_encode|raw }};
+    const variantFields = {{ variantFields|json_encode|raw }};
+    const fieldConstraints = {{ fieldConstraints|json_encode|raw }};
+
+    function isFieldTypeAllowed(fieldTypeCategory, allowedTypes) {
+        if (!allowedTypes || allowedTypes.length === 0) {
+            return true;
+        }
+        return allowedTypes.includes(fieldTypeCategory);
+    }
+
+    function populateFieldSelect(fieldSelect, source, selectedValue, isAutoHandled, googleField) {
+        fieldSelect.innerHTML = '<option value="">-- Select Field --</option>';
+        fieldSelect.disabled = !source || isAutoHandled;
+
+        const allowedTypes = fieldConstraints[googleField] || [];
+        let fieldsToShow = [];
+
+        if (source === 'product') {
+            fieldsToShow = productFields.filter(field => {
+                return isFieldTypeAllowed(field.typeCategory || 'text', allowedTypes);
+            });
+        } else if (source === 'variant') {
+            fieldsToShow = variantFields.filter(field => {
+                return isFieldTypeAllowed(field.typeCategory || 'text', allowedTypes);
+            });
+        }
+
+        fieldsToShow.forEach(field => {
+            const option = document.createElement('option');
+            option.value = field.handle;
+            option.textContent = field.name + ' (' + field.handle + ')';
+            if (selectedValue && field.handle === selectedValue) {
+                option.selected = true;
+            }
+            fieldSelect.appendChild(option);
+        });
+    }
+
+    document.querySelectorAll('#mappings-tbody tr').forEach(row => {
+        const sourceSelect = row.querySelector('.source-select');
+        const fieldSelect = row.querySelector('.field-select');
+        const currentSource = sourceSelect.value;
+        const savedFieldHandle = fieldSelect.dataset.currentValue || fieldSelect.value;
+        const googleField = row.dataset.googleField;
+        const isAutoHandled = ['id', 'title', 'price', 'availability', 'sku'].includes(googleField);
+
+        if (currentSource && !isAutoHandled) {
+            const currentValue = fieldSelect.value;
+            const allowedTypes = fieldConstraints[googleField] || [];
+            let needsRepopulation = false;
+
+            if (currentValue && savedFieldHandle) {
+                const fieldsToCheck = currentSource === 'product' ? productFields : variantFields;
+                const currentField = fieldsToCheck.find(f => f.handle === currentValue);
+                if (currentField) {
+                    const fieldTypeCategory = currentField.typeCategory || 'text';
+                    if (allowedTypes.length > 0 && !allowedTypes.includes(fieldTypeCategory)) {
+                        needsRepopulation = true;
+                    }
+                }
+            } else if (savedFieldHandle) {
+                needsRepopulation = true;
+            }
+
+            if (needsRepopulation || !currentValue) {
+                populateFieldSelect(fieldSelect, currentSource, savedFieldHandle, isAutoHandled, googleField);
+            }
+        }
+    });
+
+    document.querySelectorAll('.source-select').forEach(select => {
+        select.addEventListener('change', function() {
+            if (this.disabled) {
+                return;
+            }
+            const row = this.closest('tr');
+            const fieldSelect = row.querySelector('.field-select');
+            const googleField = row.dataset.googleField;
+            const isAutoHandled = ['id', 'title', 'price', 'availability', 'sku'].includes(googleField);
+
+            populateFieldSelect(fieldSelect, this.value, '', isAutoHandled, googleField);
+        });
+    });
+
+    // Regenerate feed button handlers
+    document.querySelectorAll('.regenerate-feed-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const siteId = this.dataset.siteId;
+            const button = this;
+
+            button.disabled = true;
+            button.textContent = 'Queueing...';
+
+            fetch(Craft.getActionUrl('google-shopping-feed/feed/regenerate'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': Craft.csrfTokenValue,
+                },
+                body: JSON.stringify({ siteId: siteId }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    Craft.cp.displayNotice('Feed regeneration queued for site.');
+                    button.textContent = 'Queued';
+                    setTimeout(() => {
+                        button.disabled = false;
+                        button.textContent = 'Regenerate';
+                    }, 3000);
+                } else {
+                    Craft.cp.displayError(data.error || 'Failed to queue regeneration.');
+                    button.disabled = false;
+                    button.textContent = 'Regenerate';
+                }
+            })
+            .catch(error => {
+                Craft.cp.displayError('Failed to queue regeneration.');
+                button.disabled = false;
+                button.textContent = 'Regenerate';
+            });
+        });
+    });
+})();
+{% endjs %}
+
+{% css %}
+#google-shopping-feed-settings .field-mappings {
+    margin: 20px 0;
+}
+
+#google-shopping-feed-settings table.data {
+    margin-top: 10px;
+}
+
+#google-shopping-feed-settings .info {
+    color: #999;
+    font-size: 11px;
+    font-weight: normal;
+    margin-left: 5px;
+}
+
+#google-shopping-feed-settings .feed-status-container {
+    margin: 20px 0;
+}
+
+#google-shopping-feed-settings .feed-status-container .status {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #ccc;
+    margin-right: 5px;
+}
+
+#google-shopping-feed-settings .feed-status-container .status.green {
+    background: #27AB83;
+}
+
+#google-shopping-feed-settings .feed-status-container .status.orange {
+    background: #F7B955;
+}
+
+#google-shopping-feed-settings .feed-status-container .status.red {
+    background: #E12D39;
+}
+
+#google-shopping-feed-settings .pane {
+    background: #f3f7fc;
+    border: 1px solid #d9e4f0;
+    border-radius: 5px;
+    padding: 16px 24px;
+    margin: 16px 0;
+}
+
+#google-shopping-feed-settings .pane h3 {
+    margin-top: 0;
+}
+
+#google-shopping-feed-settings .pane pre {
+    background: #1d2129;
+    color: #f3f7fc;
+    padding: 12px 16px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+#google-shopping-feed-settings .pane pre code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 13px;
+}
+
+#google-shopping-feed-settings hr {
+    margin: 32px 0;
+    border: none;
+    border-top: 1px solid #e3e5e8;
+}
+
+#google-shopping-feed-settings .flex {
+    gap: 24px;
+}
+
+#google-shopping-feed-settings .btngroup {
+    display: flex;
+    gap: 8px;
+}
+{% endcss %}
